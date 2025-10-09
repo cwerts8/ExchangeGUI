@@ -45,7 +45,7 @@
     - Corporate proxy configuration (if applicable)
 
 .NOTES
-    File Name      : ExchangeOnlineManagement.ps1
+    File Name      : Exchange-AdminTool.ps1
     Prerequisite   : ExchangeOnlineManagement module must be installed
     
 .USAGE
@@ -2053,5 +2053,6 @@ $syncHash.GroupMembersButton.Add_Click({
 
 Write-Log "Exchange Online Management Tool initialized"
 Write-Log "Ready to manage Exchange Online"
+
 
 $Window.ShowDialog() | Out-Null
