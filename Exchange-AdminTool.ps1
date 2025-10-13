@@ -108,7 +108,7 @@ Add-Type -AssemblyName System.Windows.Forms
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12  
 
 <#
-[system.net.webrequest]::defaultwebproxy = new-object system.net.webproxy('http://proxy.gellerco.com:8080')  
+[system.net.webrequest]::defaultwebproxy = new-object system.net.webproxy('YOURDOMAINPROXY')  
 [system.net.webrequest]::defaultwebproxy.credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials  
 [system.net.webrequest]::defaultwebproxy.BypassProxyOnLocal = $true  
 #>
@@ -2056,3 +2056,4 @@ Write-Log "Ready to manage Exchange Online"
 
 
 $Window.ShowDialog() | Out-Null
+
