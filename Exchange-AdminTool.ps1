@@ -107,6 +107,7 @@ Add-Type -AssemblyName System.Windows.Forms
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12  
 
+# Uncomment this section and modify line 112 with your proxy settings if needed
 <#
 [system.net.webrequest]::defaultwebproxy = new-object system.net.webproxy('YOURDOMAINPROXY')  
 [system.net.webrequest]::defaultwebproxy.credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials  
@@ -2056,4 +2057,5 @@ Write-Log "Ready to manage Exchange Online"
 
 
 $Window.ShowDialog() | Out-Null
+
 
