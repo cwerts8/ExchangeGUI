@@ -64,6 +64,15 @@
     - Auto-restore GUI after successful authentication
     - Prompts user to connect when accessing modules while disconnected
     - Improved flexibility for users who don't need immediate EXO access
+    
+    Version 2.8.1 - 10-15-25 - Current
+    - Fixed bug in mailbox permissions loading when only one delegate exists
+    - Fixed bug in calendar permissions loading when only one delegate exists
+    - Improved array handling in Get-CombinedMailboxPermissions function
+    - Improved array handling in calendar permission retrieval
+    - Added null/empty value checking for permission entries
+    - Enhanced error logging for permission retrieval
+    - Functions now properly return IEnumerable collections for DataGrid binding
 
 .REQUIREMENTS
     - PowerShell 5.1 or higher
@@ -142,7 +151,7 @@
 #>
 
 # Update Script version
-$ScriptVersion = "2.8.0"
+$ScriptVersion = "2.8.1"
 
 # Load logo from file path
 $logoPath = "$PSScriptRoot\FullColorLogo.png" 
@@ -963,50 +972,95 @@ $syncHash.MailboxButton.Add_Click({
     }
     
     function Get-CombinedMailboxPermissions {
-        param($MailboxIdentity)
+    param($MailboxIdentity)
+    
+    try {
+        Write-Log "Retrieving Full Access permissions for $MailboxIdentity"
+        $fullAccessPerms = @(Get-MailboxPermission -Identity $MailboxIdentity -ErrorAction Stop | 
+            Where-Object {$_.User -notlike "NT AUTHORITY\*" -and $_.User -notlike "S-1-5-*" -and $_.IsInherited -eq $false -and $_.AccessRights -contains "FullAccess"})
         
-        $fullAccessPerms = Get-MailboxPermission -Identity $MailboxIdentity -ErrorAction Stop | 
-            Where-Object {$_.User -notlike "NT AUTHORITY\*" -and $_.User -notlike "S-1-5-*" -and $_.IsInherited -eq $false -and $_.AccessRights -contains "FullAccess"}
-        
-        $sendAsPerms = Get-RecipientPermission -Identity $MailboxIdentity -ErrorAction Stop | 
-            Where-Object {$_.Trustee -notlike "NT AUTHORITY\*" -and $_.Trustee -notlike "S-1-5-*" -and $_.AccessRights -contains "SendAs"}
+        Write-Log "Retrieving Send As permissions for $MailboxIdentity"
+        $sendAsPerms = @(Get-RecipientPermission -Identity $MailboxIdentity -ErrorAction Stop | 
+            Where-Object {$_.Trustee -notlike "NT AUTHORITY\*" -and $_.Trustee -notlike "S-1-5-*" -and $_.AccessRights -contains "SendAs"})
         
         $allUsers = @{}
         
-        foreach ($perm in $fullAccessPerms) {
-            $userKey = $perm.User.ToString()
-            $displayName = Resolve-UserDisplayName -Identity $userKey
-            
-            if (-not $allUsers.ContainsKey($userKey)) {
-                $allUsers[$userKey] = [PSCustomObject]@{
-                    User = $displayName
-                    UserIdentity = $userKey
-                    HasFullAccess = $true
-                    HasSendAs = $false
+        # Process Full Access permissions
+        if ($fullAccessPerms.Count -gt 0) {
+            foreach ($perm in $fullAccessPerms) {
+                try {
+                    $userKey = $perm.User.ToString()
+                    
+                    # Skip if null or empty
+                    if ([string]::IsNullOrWhiteSpace($userKey)) {
+                        Write-Log "Warning: Skipping null/empty Full Access user"
+                        continue
+                    }
+                    
+                    $displayName = Resolve-UserDisplayName -Identity $userKey
+                    
+                    if (-not $allUsers.ContainsKey($userKey)) {
+                        $allUsers[$userKey] = [PSCustomObject]@{
+                            User = $displayName
+                            UserIdentity = $userKey
+                            HasFullAccess = $true
+                            HasSendAs = $false
+                        }
+                    } else {
+                        $allUsers[$userKey].HasFullAccess = $true
+                    }
+                } catch {
+                    Write-Log "Warning: Could not process Full Access permission for user: $($_.Exception.Message)"
+                    continue
                 }
-            } else {
-                $allUsers[$userKey].HasFullAccess = $true
             }
         }
         
-        foreach ($perm in $sendAsPerms) {
-            $userKey = $perm.Trustee.ToString()
-            $displayName = Resolve-UserDisplayName -Identity $userKey
-            
-            if (-not $allUsers.ContainsKey($userKey)) {
-                $allUsers[$userKey] = [PSCustomObject]@{
-                    User = $displayName
-                    UserIdentity = $userKey
-                    HasFullAccess = $false
-                    HasSendAs = $true
+        # Process Send As permissions
+        if ($sendAsPerms.Count -gt 0) {
+            foreach ($perm in $sendAsPerms) {
+                try {
+                    $userKey = $perm.Trustee.ToString()
+                    
+                    # Skip if null or empty
+                    if ([string]::IsNullOrWhiteSpace($userKey)) {
+                        Write-Log "Warning: Skipping null/empty Send As trustee"
+                        continue
+                    }
+                    
+                    $displayName = Resolve-UserDisplayName -Identity $userKey
+                    
+                    if (-not $allUsers.ContainsKey($userKey)) {
+                        $allUsers[$userKey] = [PSCustomObject]@{
+                            User = $displayName
+                            UserIdentity = $userKey
+                            HasFullAccess = $false
+                            HasSendAs = $true
+                        }
+                    } else {
+                        $allUsers[$userKey].HasSendAs = $true
+                    }
+                } catch {
+                    Write-Log "Warning: Could not process Send As permission for trustee: $($_.Exception.Message)"
+                    continue
                 }
-            } else {
-                $allUsers[$userKey].HasSendAs = $true
             }
         }
         
-        return $allUsers.Values | Sort-Object User
+        # Return sorted results, or empty array if no permissions
+        if ($allUsers.Count -gt 0) {
+            $result = @($allUsers.Values | Sort-Object User)
+            return ,$result  # Comma forces PowerShell to return as array
+        } else {
+            Write-Log "No delegated permissions found for $MailboxIdentity"
+            return @()
+        }
+        
+    } catch {
+        Write-Log "Error in Get-CombinedMailboxPermissions: $($_.Exception.Message)"
+        throw
     }
+}
     
     [xml]$MailboxXAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -1770,10 +1824,13 @@ $syncHash.CalendarButton.Add_Click({
         try {
             $LoadPermissionsButton.IsEnabled = $false
             Write-Log "Loading permissions for $mailbox"
-            $perms = Get-MailboxFolderPermission -Identity "${mailbox}:\Calendar" -ErrorAction Stop |
-                     Where-Object {$_.User -notlike "Default" -and $_.User -notlike "Anonymous"} |
-                     Select-Object @{N="User";E={$_.User.DisplayName}}, @{N="AccessRights";E={$_.AccessRights -join ", "}}
-            $PermissionsGrid.ItemsSource = $perms
+            
+            $perms = @(Get-MailboxFolderPermission -Identity "${mailbox}:\Calendar" -ErrorAction Stop |
+                    Where-Object {$_.User -notlike "Default" -and $_.User -notlike "Anonymous"} |
+                    Select-Object @{N="User";E={$_.User.DisplayName}}, @{N="AccessRights";E={$_.AccessRights -join ", "}})
+            
+            # Force return as array for DataGrid binding
+            $PermissionsGrid.ItemsSource = ,$perms
             
             if ($perms -and $perms.Count -gt 0) {
                 $ExportToExcelButton.IsEnabled = $true
@@ -1783,6 +1840,7 @@ $syncHash.CalendarButton.Add_Click({
             
             Write-Log "Loaded $($perms.Count) permissions"
         } catch {
+            Write-Log "Error loading permissions: $($_.Exception.Message)"
             [System.Windows.MessageBox]::Show("Error: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
         } finally {
             $LoadPermissionsButton.IsEnabled = $true
@@ -1916,12 +1974,17 @@ $syncHash.CalendarButton.Add_Click({
         try {
             $LoadRemovePermissionsButton.IsEnabled = $false
             Write-Log "Loading permissions for $mailbox"
-            $perms = Get-MailboxFolderPermission -Identity "${mailbox}:\Calendar" -ErrorAction Stop |
-                     Where-Object {$_.User -notlike "Default" -and $_.User -notlike "Anonymous"} |
-                     Select-Object @{N="User";E={$_.User.DisplayName}}, @{N="AccessRights";E={$_.AccessRights -join ", "}}
-            $RemovePermissionsGrid.ItemsSource = $perms
+            
+            $perms = @(Get-MailboxFolderPermission -Identity "${mailbox}:\Calendar" -ErrorAction Stop |
+                    Where-Object {$_.User -notlike "Default" -and $_.User -notlike "Anonymous"} |
+                    Select-Object @{N="User";E={$_.User.DisplayName}}, @{N="AccessRights";E={$_.AccessRights -join ", "}})
+            
+            # Force return as array for DataGrid binding
+            $RemovePermissionsGrid.ItemsSource = ,$perms
+            
             Write-Log "Loaded $($perms.Count) permissions"
         } catch {
+            Write-Log "Error loading permissions: $($_.Exception.Message)"
             [System.Windows.MessageBox]::Show("Error: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
         } finally {
             $LoadRemovePermissionsButton.IsEnabled = $true
