@@ -4,9 +4,12 @@
 
 .DESCRIPTION
     A comprehensive PowerShell GUI tool for managing Exchange Online mailbox permissions, calendar permissions,
-    and Active Directory group memberships. Features include:
+    automatic replies (Out of Office), and Active Directory group memberships. Features include:
+    - Optional Exchange Online connection (connect when needed)
+    - Visual connection status indicator with Connect/Disconnect controls
     - Mailbox permissions (Full Access & Send As)
     - Calendar permissions (7 levels)
+    - Automatic Replies (OOF) with rich text editor
     - AD group member viewing and management
     - Excel export capabilities for all data
     - Double-click any user/group to view their AD properties
@@ -15,7 +18,7 @@
 .AUTHOR
     Created by: Craig Werts
     Company: Geller & Co.
-	Department: Desktop Engineering
+    Department: Desktop Engineering
 
 .VERSION HISTORY
     Version 1.0.0 - 10-06-25
@@ -30,12 +33,37 @@
     - AD Properties window shows 4 tabs: General, Contact Info, Organization, Account
     - Copy email to clipboard feature in AD Properties window
     
-    Version 2.5 - Current
+    Version 2.6 - 10-09-25
     - Improved error handling and logging
     - Added progress indicators for group member loading
     - Added "Copy Emails" button for group members (Outlook format)
     - Enhanced UI with status indicators
     - AutoMapping disabled by default for Full Access permissions
+    - Added "Add_KeyDown" event handler to Mailbox and Calendar windows
+    
+    Version 2.6.1 - 10-09-25
+    - Added Company Logo and dynamic version text
+    
+    Version 2.7.0 - 10-14-25
+    - Added Automatic Replies (Out of Office) management module
+    - Implemented rich text editor with formatting toolbar (Bold, Italic, Underline)
+    - HTML-enabled message editor - no HTML knowledge required
+    - Support for internal and external automatic reply messages
+    - Scheduled automatic replies with date/time picker
+    - Three reply states: Disabled, Enabled, Scheduled
+    - Automatic HTML conversion from formatted text
+    - Visual status indicators with color coding
+    - External audience controls (All/Contacts only)
+    
+    Version 2.8.0 - 10-15-25 - Current
+    - Implemented optional Exchange Online connection
+    - GUI now launches immediately without requiring EXO connection
+    - Added visual connection status indicator (Red/Green)
+    - Connect/Disconnect buttons in GUI
+    - Connection check before opening each module
+    - Auto-restore GUI after successful authentication
+    - Prompts user to connect when accessing modules while disconnected
+    - Improved flexibility for users who don't need immediate EXO access
 
 .REQUIREMENTS
     - PowerShell 5.1 or higher
@@ -57,10 +85,19 @@
     From the GUI you can:
     - Manage Mailboxes: Add/edit/remove Full Access and Send As permissions
     - Calendar Permissions: Add/edit/remove calendar delegation permissions
+    - Automatic Replies: Configure Out of Office messages with rich text formatting
     - AD Group Members: View group members, export to Excel, copy email addresses
     - Double-click any user/group name in permission lists to view their AD properties
 
 .FEATURES
+    Connection Management:
+    - Optional Exchange Online connection (launch GUI without connecting)
+    - Visual status indicator (Red=Disconnected, Green=Connected)
+    - Connect/Disconnect buttons in GUI
+    - Console-based authentication with auto-restore GUI
+    - Connection validation before accessing modules
+    - Reconnect capability if session expires
+    
     Mailbox Permissions:
     - Add Full Access and/or Send As permissions
     - View and edit existing permissions
@@ -72,6 +109,17 @@
     - 7 permission levels (AvailabilityOnly to Owner)
     - Add, edit, and remove calendar access
     - Export permissions to Excel
+    
+    Automatic Replies (Out of Office):
+    - Rich text editor with formatting toolbar (Bold, Italic, Underline)
+    - Create formatted messages without HTML knowledge
+    - Automatic HTML conversion and rendering
+    - Internal and external message support
+    - Three states: Disabled, Enabled (always on), Scheduled (date/time range)
+    - Date/time picker for scheduled replies
+    - External audience options (All senders or Contacts only)
+    - Color-coded status display (Gray=Disabled, Green=Enabled, Orange=Scheduled)
+    - Clear formatting button to remove all text formatting
     
     AD Group Members:
     - Search by group name or email
@@ -92,6 +140,12 @@
     http://proxy.gellerco.com:8080
 
 #>
+
+# Update Script version
+$ScriptVersion = "2.8.0"
+
+# Load logo from file path
+$logoPath = "$PSScriptRoot\FullColorLogo.png" 
 
 #Requires -Modules ExchangeOnlineManagement
 
@@ -114,13 +168,16 @@ Add-Type -AssemblyName System.Windows.Forms
 [system.net.webrequest]::defaultwebproxy.BypassProxyOnLocal = $true  
 #>
 
+# Pre-connection check - OPTIONAL NOW
 Write-Host "======================================" -ForegroundColor Cyan
 Write-Host "Exchange Online Management Tool" -ForegroundColor Cyan
 Write-Host "======================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Import the module
 Import-Module ExchangeOnlineManagement -ErrorAction Stop
 
+# Check if ImportExcel module is installed
 if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
     Write-Host "ImportExcel module not found. Installing..." -ForegroundColor Yellow
     try {
@@ -132,47 +189,22 @@ if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
     }
 }
 
+# Check current connection status
 $existingConnection = Get-ConnectionInformation -ErrorAction SilentlyContinue
 
-if ($null -eq $existingConnection -or $existingConnection.State -ne 'Connected') {
-    Write-Host "No active Exchange Online connection detected." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "IMPORTANT: You must authenticate to Exchange Online before launching the GUI." -ForegroundColor Yellow
-    Write-Host "This is due to Windows authentication limitations in GUI applications." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Connecting to Exchange Online (browser window will open)..." -ForegroundColor Green
-    Write-Host ""
-    
-    try {
-        Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
-        
-        Write-Host ""
-        Write-Host "Successfully connected to Exchange Online!" -ForegroundColor Green
-        Write-Host "Launching GUI..." -ForegroundColor Green
-        Write-Host ""
-        Start-Sleep -Seconds 2
-        
-    } catch {
-        Write-Host ""
-        Write-Host "Connection failed: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host ""
-        Write-Host "Troubleshooting tips:" -ForegroundColor Yellow
-        Write-Host "1. Try running 'Connect-ExchangeOnline' manually first" -ForegroundColor Yellow
-        Write-Host "2. Clear cached credentials: Settings > Accounts > Access work or school" -ForegroundColor Yellow
-        Write-Host "3. Contact IT if authentication continues to fail" -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "Press ENTER to exit..." -ForegroundColor Red
-        $null = Read-Host
-        exit
-    }
-} else {
+if ($null -ne $existingConnection -and $existingConnection.State -eq 'Connected') {
     Write-Host "Existing Exchange Online connection detected!" -ForegroundColor Green
     Write-Host "Connected as: $($existingConnection.UserPrincipalName)" -ForegroundColor Cyan
     Write-Host "Connection State: $($existingConnection.State)" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "Launching GUI..." -ForegroundColor Green
-    Start-Sleep -Seconds 1
+} else {
+    Write-Host "No Exchange Online connection detected." -ForegroundColor Yellow
+    Write-Host "You can connect later from the GUI if needed." -ForegroundColor Yellow
+    Write-Host ""
 }
+
+Write-Host "Launching GUI..." -ForegroundColor Green
+Start-Sleep -Seconds 1
 
 $syncHash = [hashtable]::Synchronized(@{})
 
@@ -570,49 +602,106 @@ function Show-ADPropertiesWindow {
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Exchange Online Management Tool" 
-        Height="600" 
+        Height="700" 
         Width="800" 
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanMinimize">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="60"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="100"/>
         </Grid.RowDefinitions>
         
-        <Border Grid.Row="0" Background="#233A4A" Padding="15">
-            <StackPanel>
-                <TextBlock Text="Exchange Online Management" 
-                          FontSize="20" 
-                          FontWeight="Bold" 
-                          Foreground="White"/>
-                <TextBlock x:Name="StatusText" 
-                          Text="Status: Connected" 
-                          FontSize="12" 
-                          Foreground="#00FF00" 
-                          Margin="0,5,0,0"/>
-            </StackPanel>
+        <!-- Logo Section -->
+        <Border Grid.Row="0" Background="White" Padding="15" BorderBrush="#dee2e6" BorderThickness="0,0,0,1">
+            <DockPanel>
+                <Image x:Name="CompanyLogo" 
+                       DockPanel.Dock="Left"
+                       Width="250" 
+                       Height="60" 
+                       Margin="0,0,20,0"
+                       Stretch="Uniform"
+                       HorizontalAlignment="Left"
+                       VerticalAlignment="Center"/>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="IT Administration Tools" 
+                              FontSize="11" 
+                              Foreground="#666" 
+                              Margin="0,2,0,0"/>
+                </StackPanel>
+            </DockPanel>
         </Border>
         
-        <Border Grid.Row="1" Background="WhiteSmoke" Padding="20">
+        <!-- Header Section -->
+        <Border Grid.Row="1" Background="#233A4A" Padding="15">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Left">
+                    <TextBlock Text="Exchange Online Management" 
+                              FontSize="20" 
+                              FontWeight="Bold" 
+                              Foreground="White"/>
+                </StackPanel>
+                <TextBlock x:Name="VersionText"
+                          Text="v1.2.0"
+                          FontSize="11"
+                          Foreground="#B0BEC5"
+                          VerticalAlignment="Bottom"
+                          HorizontalAlignment="Right"
+                          DockPanel.Dock="Right"/>
+            </DockPanel>
+        </Border>
+        
+        <!-- Main Content Area -->
+        <Border Grid.Row="2" Background="WhiteSmoke" Padding="20">
             <StackPanel>
-                <GroupBox Header="Connection" Padding="10" Margin="0,0,0,20">
+                <GroupBox Header="Connection Status" Padding="10" Margin="0,0,0,20">
                     <StackPanel>
+                        <DockPanel Margin="0,0,0,10">
+                            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                                <Ellipse x:Name="ConnectionStatusIndicator" 
+                                        Width="12" 
+                                        Height="12" 
+                                        Fill="Red" 
+                                        Margin="0,0,10,0"
+                                        VerticalAlignment="Center"/>
+                                <TextBlock x:Name="ConnectionStatusText" 
+                                        Text="Not Connected" 
+                                        FontWeight="Bold"
+                                        VerticalAlignment="Center"
+                                        Foreground="Red"/>
+                            </StackPanel>
+                        </DockPanel>
+                        
                         <TextBlock x:Name="ConnectionInfoText" 
-                                  Text="Connected and ready to manage Exchange Online" 
-                                  TextWrapping="Wrap" 
-                                  Margin="0,0,0,15"/>
-                        <Button x:Name="DisconnectButton" 
-                               Content="Disconnect" 
-                               Width="120" 
-                               Height="35" 
-                               Margin="5"
-                               Background="#dc3545"
-                               Foreground="White"
-                               FontWeight="Bold"
-                               HorizontalAlignment="Center"
-                               Cursor="Hand"/>
+                                Text="Click 'Connect' to authenticate to Exchange Online" 
+                                TextWrapping="Wrap" 
+                                Margin="0,0,0,15"
+                                FontSize="11"
+                                Foreground="#666"/>
+                        
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <Button x:Name="ConnectButton" 
+                                Content="Connect to Exchange Online" 
+                                Width="180" 
+                                Height="35" 
+                                Margin="5"
+                                Background="#28a745"
+                                Foreground="White"
+                                FontWeight="Bold"
+                                Cursor="Hand"/>
+                            <Button x:Name="DisconnectButton" 
+                                Content="Disconnect" 
+                                Width="120" 
+                                Height="35" 
+                                Margin="5"
+                                Background="#dc3545"
+                                Foreground="White"
+                                FontWeight="Bold"
+                                Cursor="Hand"
+                                IsEnabled="False"/>
+                        </StackPanel>
                     </StackPanel>
                 </GroupBox>
                 
@@ -638,12 +727,19 @@ function Show-ADPropertiesWindow {
                                Margin="0,5"
                                HorizontalAlignment="Left"
                                Width="200"/>
+						<Button x:Name="AutoRepliesButton" 
+                               Content="Automatic Replies (OOO)" 
+                               Height="30" 
+                               Margin="0,5"
+                               HorizontalAlignment="Left"
+                               Width="200"/>
                     </StackPanel>
                 </GroupBox>
             </StackPanel>
         </Border>
         
-        <Border Grid.Row="2" Background="#f8f9fa" BorderBrush="#dee2e6" BorderThickness="0,1,0,0">
+        <!-- Status/Log Section -->
+        <Border Grid.Row="3" Background="#f8f9fa" BorderBrush="#dee2e6" BorderThickness="0,1,0,0">
             <DockPanel Margin="10">
                 <TextBlock Text="Activity Log:" 
                           DockPanel.Dock="Top" 
@@ -666,14 +762,24 @@ $reader = New-Object System.Xml.XmlNodeReader $XAML
 $Window = [Windows.Markup.XamlReader]::Load($reader)
 
 $syncHash.Window = $Window
+
+$syncHash.ConnectionStatusIndicator = $Window.FindName("ConnectionStatusIndicator")
+$syncHash.ConnectionStatusText = $Window.FindName("ConnectionStatusText")
+$syncHash.ConnectionInfoText = $Window.FindName("ConnectionInfoText")
+$syncHash.ConnectButton = $Window.FindName("ConnectButton")
 $syncHash.DisconnectButton = $Window.FindName("DisconnectButton")
 $syncHash.StatusText = $Window.FindName("StatusText")
-$syncHash.ConnectionInfoText = $Window.FindName("ConnectionInfoText")
 $syncHash.LogBox = $Window.FindName("LogBox")
 $syncHash.ManagementGroup = $Window.FindName("ManagementGroup")
 $syncHash.MailboxButton = $Window.FindName("MailboxButton")
 $syncHash.CalendarButton = $Window.FindName("CalendarButton")
 $syncHash.GroupMembersButton = $Window.FindName("GroupMembersButton")
+$syncHash.VersionText = $Window.FindName("VersionText")
+$syncHash.AutoRepliesButton = $Window.FindName("AutoRepliesButton")
+
+# Set dynamic version text
+$syncHash.Window.Title = "Exchange Online Management Tool v$ScriptVersion"
+$syncHash.VersionText.Text = "v$ScriptVersion"
 
 function Write-Log {
     param($Message)
@@ -684,11 +790,108 @@ function Write-Log {
     })
 }
 
-$connInfo = Get-ConnectionInformation -ErrorAction SilentlyContinue
-if ($connInfo) {
-    $syncHash.ConnectionInfoText.Text = "Connected as: $($connInfo.UserPrincipalName)"
-    Write-Log "Connected to Exchange Online as $($connInfo.UserPrincipalName)"
+# Function to update connection status in GUI
+function Update-ConnectionStatus {
+    $connInfo = Get-ConnectionInformation -ErrorAction SilentlyContinue
+    
+    if ($null -ne $connInfo -and $connInfo.State -eq 'Connected') {
+        $syncHash.ConnectionStatusIndicator.Fill = [System.Windows.Media.Brushes]::Green
+        $syncHash.ConnectionStatusText.Text = "Connected"
+        $syncHash.ConnectionStatusText.Foreground = [System.Windows.Media.Brushes]::Green
+        $syncHash.ConnectionInfoText.Text = "Connected as: $($connInfo.UserPrincipalName)"
+        $syncHash.ConnectButton.IsEnabled = $false
+        $syncHash.DisconnectButton.IsEnabled = $true
+        Write-Log "Connected to Exchange Online as $($connInfo.UserPrincipalName)"
+    } else {
+        $syncHash.ConnectionStatusIndicator.Fill = [System.Windows.Media.Brushes]::Red
+        $syncHash.ConnectionStatusText.Text = "Not Connected"
+        $syncHash.ConnectionStatusText.Foreground = [System.Windows.Media.Brushes]::Red
+        $syncHash.ConnectionInfoText.Text = "Click 'Connect' to authenticate to Exchange Online"
+        $syncHash.ConnectButton.IsEnabled = $true
+        $syncHash.DisconnectButton.IsEnabled = $false
+        Write-Log "Not connected to Exchange Online"
+    }
 }
+
+if (Test-Path $logoPath) {
+    try {
+        $logoImage = New-Object System.Windows.Media.Imaging.BitmapImage
+        $logoImage.BeginInit()
+        $logoImage.UriSource = New-Object System.Uri($logoPath)
+        $logoImage.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+        $logoImage.EndInit()
+        $logoImage.Freeze()
+        
+        $CompanyLogo = $Window.FindName("CompanyLogo")
+        $CompanyLogo.Source = $logoImage
+    } catch {
+        Write-Log "Could not load company logo from $logoPath"
+    }
+}
+
+# Update connection status on load
+Update-ConnectionStatus
+
+$syncHash.ConnectButton.Add_Click({
+    Write-Log "Initiating Exchange Online connection..."
+    
+    # Minimize the GUI window
+    $syncHash.Window.WindowState = [System.Windows.WindowState]::Minimized
+    
+    # Show console message
+    $host.UI.RawUI.ForegroundColor = "Cyan"
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "CONNECTING TO EXCHANGE ONLINE" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "A browser window will open for authentication..." -ForegroundColor Yellow
+    Write-Host "Please complete the authentication process." -ForegroundColor Yellow
+    Write-Host ""
+    
+    try {
+        Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
+        
+        Write-Host ""
+        Write-Host "Successfully connected to Exchange Online!" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "Returning to GUI..." -ForegroundColor Green
+
+        # Restore the GUI window
+        $syncHash.Window.WindowState = [System.Windows.WindowState]::Normal
+        $syncHash.Window.Activate()
+        
+        # Update connection status
+        Update-ConnectionStatus
+        
+        [System.Windows.MessageBox]::Show(
+            "Successfully connected to Exchange Online!",
+            "Connected",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information
+        )
+        
+    } catch {
+        Write-Host ""
+        Write-Host "Connection failed: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Press ENTER to return to the GUI..." -ForegroundColor Yellow
+        $null = Read-Host
+        
+        # Restore the GUI window
+        $syncHash.Window.WindowState = [System.Windows.WindowState]::Normal
+        $syncHash.Window.Activate()
+        
+        Write-Log "Connection failed: $($_.Exception.Message)"
+        
+        [System.Windows.MessageBox]::Show(
+            "Failed to connect to Exchange Online:`n`n$($_.Exception.Message)`n`nPlease try again.",
+            "Connection Failed",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error
+        )
+    }
+})
 
 $syncHash.DisconnectButton.Add_Click({
     Write-Log "Disconnecting from Exchange Online..."
@@ -697,14 +900,14 @@ $syncHash.DisconnectButton.Add_Click({
         Disconnect-ExchangeOnline -Confirm:$false -ErrorAction Stop
         Write-Log "Successfully disconnected from Exchange Online"
         
+        Update-ConnectionStatus
+        
         [System.Windows.MessageBox]::Show(
-            "Disconnected from Exchange Online.`n`nThe application will now close.",
+            "Disconnected from Exchange Online.",
             "Disconnected",
             [System.Windows.MessageBoxButton]::OK,
             [System.Windows.MessageBoxImage]::Information
         )
-        
-        $syncHash.Window.Close()
         
     } catch {
         Write-Log "Disconnect error: $($_.Exception.Message)"
@@ -718,7 +921,23 @@ $syncHash.DisconnectButton.Add_Click({
 })
 
 $syncHash.MailboxButton.Add_Click({
-    Write-Log "Opening Mailbox Permissions window..."
+    # Check if connected
+    $connInfo = Get-ConnectionInformation -ErrorAction SilentlyContinue
+    if ($null -eq $connInfo -or $connInfo.State -ne 'Connected') {
+        $result = [System.Windows.MessageBox]::Show(
+            "You are not connected to Exchange Online.`n`nWould you like to connect now?",
+            "Connection Required",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Question
+        )
+        
+        if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
+            $syncHash.ConnectButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+        }
+        return
+    }
+    
+    Write-Log "Opening Mailbox Permissions window..."v
     
     function Resolve-UserDisplayName {
         param($Identity)
@@ -810,7 +1029,7 @@ $syncHash.MailboxButton.Add_Click({
                     </Grid.RowDefinitions>
                     
                     <StackPanel Grid.Row="0" Margin="0,0,0,15">
-                        <TextBlock Text="Shared Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBlock Text="Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
                         <TextBox x:Name="MbxAddMailboxBox" Height="25" Padding="5"/>
                     </StackPanel>
                     
@@ -854,7 +1073,7 @@ $syncHash.MailboxButton.Add_Click({
                     </Grid.RowDefinitions>
                     
                     <StackPanel Grid.Row="0" Margin="0,0,0,15">
-                        <TextBlock Text="Shared Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBlock Text="Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
                         <DockPanel>
                             <Button x:Name="MbxLoadPermissionsButton" Content="Load" Width="80" Height="25" Margin="10,0,0,0" DockPanel.Dock="Right" Background="#007bff" Foreground="White" FontWeight="Bold"/>
                             <TextBox x:Name="MbxViewMailboxBox" Height="25" Padding="5"/>
@@ -898,7 +1117,7 @@ $syncHash.MailboxButton.Add_Click({
                     </Grid.RowDefinitions>
                     
                     <StackPanel Grid.Row="0" Margin="0,0,0,15">
-                        <TextBlock Text="Shared Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBlock Text="Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
                         <DockPanel>
                             <Button x:Name="MbxLoadRemovePermissionsButton" Content="Load" Width="80" Height="25" Margin="10,0,0,0" DockPanel.Dock="Right" Background="#007bff" Foreground="White" FontWeight="Bold"/>
                             <TextBox x:Name="MbxRemoveMailboxBox" Height="25" Padding="5"/>
@@ -1281,11 +1500,58 @@ $syncHash.MailboxButton.Add_Click({
     })
     
     $MbxRemoveCloseButton.Add_Click({ $MbxWindow.Close() })
+	
+	# Add Enter key support for Mailbox Add tab
+	$MbxAddMailboxBox.Add_KeyDown({
+		param($sender, $e)
+		if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+			$MbxAddUserBox.Focus()
+		}
+	})
+
+	$MbxAddUserBox.Add_KeyDown({
+		param($sender, $e)
+		if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+			$MbxAddButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+		}
+	})
+
+	# Add Enter key support for Mailbox View/Edit tab
+	$MbxViewMailboxBox.Add_KeyDown({
+		param($sender, $e)
+		if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+			$MbxLoadPermissionsButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+		}
+	})
+
+	# Add Enter key support for Mailbox Remove tab
+	$MbxRemoveMailboxBox.Add_KeyDown({
+		param($sender, $e)
+		if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+			$MbxLoadRemovePermissionsButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+		}
+	})
     
     $MbxWindow.ShowDialog() | Out-Null
 })
 
 $syncHash.CalendarButton.Add_Click({
+    # Check if connected
+    $connInfo = Get-ConnectionInformation -ErrorAction SilentlyContinue
+    if ($null -eq $connInfo -or $connInfo.State -ne 'Connected') {
+        $result = [System.Windows.MessageBox]::Show(
+            "You are not connected to Exchange Online.`n`nWould you like to connect now?",
+            "Connection Required",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Question
+        )
+        
+        if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
+            $syncHash.ConnectButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+        }
+        return
+    }
+    
     Write-Log "Opening Calendar Permissions window..."
     
     [xml]$CalendarXAML = @"
@@ -1309,7 +1575,7 @@ $syncHash.CalendarButton.Add_Click({
                     </Grid.RowDefinitions>
                     
                     <StackPanel Grid.Row="0" Margin="0,0,0,15">
-                        <TextBlock Text="Shared Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBlock Text="Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
                         <TextBox x:Name="AddMailboxBox" Height="25" Padding="5"/>
                     </StackPanel>
                     
@@ -1352,7 +1618,7 @@ $syncHash.CalendarButton.Add_Click({
                     </Grid.RowDefinitions>
                     
                     <StackPanel Grid.Row="0" Margin="0,0,0,15">
-                        <TextBlock Text="Shared Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBlock Text="Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
                         <DockPanel>
                             <Button x:Name="LoadPermissionsButton" Content="Load" Width="80" Height="25" Margin="10,0,0,0" DockPanel.Dock="Right" Background="#007bff" Foreground="White" FontWeight="Bold"/>
                             <TextBox x:Name="ViewMailboxBox" Height="25" Padding="5"/>
@@ -1402,7 +1668,7 @@ $syncHash.CalendarButton.Add_Click({
                     </Grid.RowDefinitions>
                     
                     <StackPanel Grid.Row="0" Margin="0,0,0,15">
-                        <TextBlock Text="Shared Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
+                        <TextBlock Text="Mailbox Email:" FontWeight="Bold" Margin="0,0,0,5"/>
                         <DockPanel>
                             <Button x:Name="LoadRemovePermissionsButton" Content="Load" Width="80" Height="25" Margin="10,0,0,0" DockPanel.Dock="Right" Background="#007bff" Foreground="White" FontWeight="Bold"/>
                             <TextBox x:Name="RemoveMailboxBox" Height="25" Padding="5"/>
@@ -1689,6 +1955,37 @@ $syncHash.CalendarButton.Add_Click({
     })
     
     $RemoveCloseButton.Add_Click({ $CalWindow.Close() })
+	
+	# Add Enter key support for Calendar Add tab
+	$AddMailboxBox.Add_KeyDown({
+		param($sender, $e)
+		if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+			$AddUserBox.Focus()
+		}
+	})
+
+	$AddUserBox.Add_KeyDown({
+		param($sender, $e)
+		if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+			$AddButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+		}
+	})
+
+	# Add Enter key support for Calendar View/Edit tab
+	$ViewMailboxBox.Add_KeyDown({
+		param($sender, $e)
+		if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+			$LoadPermissionsButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+		}
+	})
+
+	# Add Enter key support for Calendar Remove tab
+	$RemoveMailboxBox.Add_KeyDown({
+		param($sender, $e)
+		if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+			$LoadRemovePermissionsButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+		}
+	})
     
     $CalWindow.ShowDialog() | Out-Null
 })
@@ -2052,10 +2349,748 @@ $syncHash.GroupMembersButton.Add_Click({
     $GrpWindow.ShowDialog() | Out-Null
 })
 
+$syncHash.AutoRepliesButton.Add_Click({
+    # Check if connected
+    $connInfo = Get-ConnectionInformation -ErrorAction SilentlyContinue
+    if ($null -eq $connInfo -or $connInfo.State -ne 'Connected') {
+        $result = [System.Windows.MessageBox]::Show(
+            "You are not connected to Exchange Online.`n`nWould you like to connect now?",
+            "Connection Required",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Question
+        )
+        
+        if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
+            $syncHash.ConnectButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+        }
+        return
+    }
+    
+    Write-Log "Opening Automatic Replies window..."
+    
+    [xml]$AutoRepliesXAML = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Automatic Replies (Out of Office) Management" 
+        Height="650" 
+        Width="750" 
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <GroupBox Grid.Row="0" Header="Mailbox Information" Margin="15,15,15,10" Padding="15">
+            <StackPanel>
+                <TextBlock Text="Mailbox Email Address:" FontWeight="Bold" Margin="0,0,0,5"/>
+                <DockPanel Margin="0,0,0,10">
+                    <Button x:Name="LoadAutoRepliesButton" 
+                           Content="Load Settings" 
+                           Width="120" 
+                           Height="30" 
+                           Margin="10,0,0,0" 
+                           DockPanel.Dock="Right" 
+                           Background="#007bff" 
+                           Foreground="White" 
+                           FontWeight="Bold"/>
+                    <TextBox x:Name="MailboxIdentityBox" 
+                            Height="30" 
+                            Padding="5"
+                            VerticalContentAlignment="Center"/>
+                </DockPanel>
+                
+                <StackPanel x:Name="StatusPanel" Visibility="Collapsed" Margin="0,10,0,0">
+                    <Border x:Name="StatusBorder" BorderThickness="1" Padding="10" CornerRadius="3">
+                        <StackPanel>
+                            <TextBlock x:Name="MailboxNameText" FontWeight="Bold" Margin="0,0,0,5"/>
+                            <TextBlock x:Name="AutoReplyStateText" FontSize="11" Margin="0,0,0,3"/>
+                            <TextBlock x:Name="ScheduledText" FontSize="11" Margin="0,0,0,3"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </StackPanel>
+        </GroupBox>
+        
+        <TabControl Grid.Row="1" Margin="15,0,15,10" x:Name="SettingsTabControl" IsEnabled="False">
+            <TabItem Header="Auto Reply Settings">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="20">
+                        <GroupBox Header="Status" Padding="10" Margin="0,0,0,15">
+                            <StackPanel>
+                                <RadioButton x:Name="DisabledRadio" Content="Disabled" GroupName="AutoReplyState" Margin="0,5" FontSize="13"/>
+                                <RadioButton x:Name="EnabledRadio" Content="Enabled" GroupName="AutoReplyState" Margin="0,5" FontSize="13"/>
+                                <RadioButton x:Name="ScheduledRadio" Content="Scheduled (Time Range)" GroupName="AutoReplyState" Margin="0,5" FontSize="13"/>
+                            </StackPanel>
+                        </GroupBox>
+                        
+                        <GroupBox Header="Schedule (Only for Scheduled)" Padding="10" Margin="0,0,0,15" x:Name="ScheduleGroup">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,5">
+                                    <TextBlock Text="Start Date/Time:" Width="120" VerticalAlignment="Center" FontWeight="Bold"/>
+                                    <DatePicker x:Name="StartDatePicker" Width="150" Margin="0,0,10,0"/>
+                                    <TextBox x:Name="StartTimeBox" Width="80" Height="25" Padding="5" ToolTip="HH:mm format (e.g., 09:00)"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,5">
+                                    <TextBlock Text="End Date/Time:" Width="120" VerticalAlignment="Center" FontWeight="Bold"/>
+                                    <DatePicker x:Name="EndDatePicker" Width="150" Margin="0,0,10,0"/>
+                                    <TextBox x:Name="EndTimeBox" Width="80" Height="25" Padding="5" ToolTip="HH:mm format (e.g., 17:00)"/>
+                                </StackPanel>
+                                <TextBlock Text="Time format: HH:mm (24-hour, e.g., 09:00 or 17:30)" 
+                                          FontSize="10" 
+                                          Foreground="Gray" 
+                                          FontStyle="Italic" 
+                                          Margin="120,5,0,0"/>
+                            </StackPanel>
+                        </GroupBox>
+                        
+                        <GroupBox Header="Internal Message (to people in your organization)" Padding="10" Margin="0,0,0,15">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,5" Background="#f0f0f0" Height="35">
+                                    <Button x:Name="InternalBoldButton" Content="B" Width="30" Height="25" Margin="5,5,2,5" FontWeight="Bold" ToolTip="Bold"/>
+                                    <Button x:Name="InternalItalicButton" Content="I" Width="30" Height="25" Margin="2,5" FontStyle="Italic" ToolTip="Italic"/>
+                                    <Button x:Name="InternalUnderlineButton" Content="U" Width="30" Height="25" Margin="2,5" ToolTip="Underline">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
+                                                    <TextBlock Text="{TemplateBinding Content}" TextDecorations="Underline" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                    </Button>
+                                    <Separator Width="1" Margin="5,5"/>
+                                    <Button x:Name="InternalClearButton" Content="Clear Format" Width="90" Height="25" Margin="5" ToolTip="Remove all formatting"/>
+                                </StackPanel>
+                                <Border BorderBrush="#dee2e6" BorderThickness="1" Padding="5">
+                                    <RichTextBox x:Name="InternalRichTextBox" 
+                                                Height="120" 
+                                                VerticalScrollBarVisibility="Auto"
+                                                Background="White"
+                                                AcceptsReturn="True"/>
+                                </Border>
+                            </DockPanel>
+                        </GroupBox>
+                        
+                        <GroupBox Header="External Message (to people outside your organization)" Padding="10" Margin="0,0,0,15">
+                            <StackPanel>
+                                <CheckBox x:Name="ExternalEnabledCheck" Content="Send automatic replies to external senders" Margin="0,0,0,10" FontWeight="Bold"/>
+                                <RadioButton x:Name="ExternalAllRadio" Content="Send to all external senders" GroupName="ExternalAudience" Margin="0,5" IsEnabled="False"/>
+                                <RadioButton x:Name="ExternalKnownRadio" Content="Send to external senders in my contacts only" GroupName="ExternalAudience" Margin="0,5" IsEnabled="False"/>
+                                <DockPanel Margin="0,10,0,0">
+                                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,5" Background="#f0f0f0" Height="35">
+                                        <Button x:Name="ExternalBoldButton" Content="B" Width="30" Height="25" Margin="5,5,2,5" FontWeight="Bold" ToolTip="Bold" IsEnabled="False"/>
+                                        <Button x:Name="ExternalItalicButton" Content="I" Width="30" Height="25" Margin="2,5" FontStyle="Italic" ToolTip="Italic" IsEnabled="False"/>
+                                        <Button x:Name="ExternalUnderlineButton" Content="U" Width="30" Height="25" Margin="2,5" ToolTip="Underline" IsEnabled="False">
+                                            <Button.Template>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
+                                                        <TextBlock Text="{TemplateBinding Content}" TextDecorations="Underline" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                </ControlTemplate>
+                                            </Button.Template>
+                                        </Button>
+                                        <Separator Width="1" Margin="5,5"/>
+                                        <Button x:Name="ExternalClearButton" Content="Clear Format" Width="90" Height="25" Margin="5" ToolTip="Remove all formatting" IsEnabled="False"/>
+                                    </StackPanel>
+                                    <Border BorderBrush="#dee2e6" BorderThickness="1" Padding="5">
+                                        <RichTextBox x:Name="ExternalRichTextBox" 
+                                                    Height="100" 
+                                                    VerticalScrollBarVisibility="Auto"
+                                                    Background="White"
+                                                    AcceptsReturn="True"
+                                                    IsEnabled="False"/>
+                                    </Border>
+                                </DockPanel>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+        
+        <Border Grid.Row="2" Background="#f8f9fa" BorderBrush="#dee2e6" BorderThickness="0,1,0,0" Padding="15">
+            <DockPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" DockPanel.Dock="Left">
+                    <TextBlock x:Name="StatusTextBlock" 
+                              Text="Enter a mailbox email address to begin" 
+                              VerticalAlignment="Center"
+                              FontSize="11"
+                              Foreground="#666"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="SaveButton" 
+                           Content="Save Changes" 
+                           Width="130" 
+                           Height="32" 
+                           Margin="0,0,10,0" 
+                           Background="#28a745" 
+                           Foreground="White" 
+                           FontWeight="Bold"
+                           IsEnabled="False"/>
+                    <Button x:Name="CloseButton" 
+                           Content="Close" 
+                           Width="80" 
+                           Height="32" 
+                           Background="#6c757d" 
+                           Foreground="White"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>
+"@
+    
+    $autoReader = New-Object System.Xml.XmlNodeReader $AutoRepliesXAML
+    $AutoWindow = [Windows.Markup.XamlReader]::Load($autoReader)
+    $AutoWindow.Owner = $syncHash.Window
+    
+    # Get controls
+    $MailboxIdentityBox = $AutoWindow.FindName("MailboxIdentityBox")
+    $LoadAutoRepliesButton = $AutoWindow.FindName("LoadAutoRepliesButton")
+    $StatusPanel = $AutoWindow.FindName("StatusPanel")
+    $StatusBorder = $AutoWindow.FindName("StatusBorder")
+    $MailboxNameText = $AutoWindow.FindName("MailboxNameText")
+    $AutoReplyStateText = $AutoWindow.FindName("AutoReplyStateText")
+    $ScheduledText = $AutoWindow.FindName("ScheduledText")
+    
+    $SettingsTabControl = $AutoWindow.FindName("SettingsTabControl")
+    $DisabledRadio = $AutoWindow.FindName("DisabledRadio")
+    $EnabledRadio = $AutoWindow.FindName("EnabledRadio")
+    $ScheduledRadio = $AutoWindow.FindName("ScheduledRadio")
+    $ScheduleGroup = $AutoWindow.FindName("ScheduleGroup")
+    $StartDatePicker = $AutoWindow.FindName("StartDatePicker")
+    $StartTimeBox = $AutoWindow.FindName("StartTimeBox")
+    $EndDatePicker = $AutoWindow.FindName("EndDatePicker")
+    $EndTimeBox = $AutoWindow.FindName("EndTimeBox")
+    
+    $InternalRichTextBox = $AutoWindow.FindName("InternalRichTextBox")
+    $InternalBoldButton = $AutoWindow.FindName("InternalBoldButton")
+    $InternalItalicButton = $AutoWindow.FindName("InternalItalicButton")
+    $InternalUnderlineButton = $AutoWindow.FindName("InternalUnderlineButton")
+    $InternalClearButton = $AutoWindow.FindName("InternalClearButton")
+    
+    $ExternalEnabledCheck = $AutoWindow.FindName("ExternalEnabledCheck")
+    $ExternalAllRadio = $AutoWindow.FindName("ExternalAllRadio")
+    $ExternalKnownRadio = $AutoWindow.FindName("ExternalKnownRadio")
+    $ExternalRichTextBox = $AutoWindow.FindName("ExternalRichTextBox")
+    $ExternalBoldButton = $AutoWindow.FindName("ExternalBoldButton")
+    $ExternalItalicButton = $AutoWindow.FindName("ExternalItalicButton")
+    $ExternalUnderlineButton = $AutoWindow.FindName("ExternalUnderlineButton")
+    $ExternalClearButton = $AutoWindow.FindName("ExternalClearButton")
+    
+    $StatusTextBlock = $AutoWindow.FindName("StatusTextBlock")
+    $SaveButton = $AutoWindow.FindName("SaveButton")
+    $CloseButton = $AutoWindow.FindName("CloseButton")
+    
+    $script:currentMailboxSettings = $null
+    
+    # Function to convert RichTextBox to HTML
+    function Get-RichTextBoxHtml {
+        param(
+            [System.Windows.Controls.RichTextBox]$RichTextBox
+        )
+        
+        $textRange = New-Object System.Windows.Documents.TextRange($RichTextBox.Document.ContentStart, $RichTextBox.Document.ContentEnd)
+        $text = $textRange.Text
+        
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            return ""
+        }
+        
+        $html = "<html><body style='font-family: Calibri, Arial, sans-serif; font-size: 11pt;'>"
+        
+        foreach ($block in $RichTextBox.Document.Blocks) {
+            if ($block -is [System.Windows.Documents.Paragraph]) {
+                $html += "<p>"
+                
+                foreach ($inline in $block.Inlines) {
+                    if ($inline -is [System.Windows.Documents.Run]) {
+                        $runText = [System.Net.WebUtility]::HtmlEncode($inline.Text)
+                        
+                        $isBold = $inline.FontWeight -eq [System.Windows.FontWeights]::Bold
+                        $isItalic = $inline.FontStyle -eq [System.Windows.FontStyles]::Italic
+                        $isUnderline = $inline.TextDecorations.Count -gt 0
+                        
+                        if ($isBold) { $runText = "<b>$runText</b>" }
+                        if ($isItalic) { $runText = "<i>$runText</i>" }
+                        if ($isUnderline) { $runText = "<u>$runText</u>" }
+                        
+                        $html += $runText
+                    } elseif ($inline -is [System.Windows.Documents.LineBreak]) {
+                        $html += "<br/>"
+                    }
+                }
+                
+                $html += "</p>"
+            }
+        }
+        
+        $html += "</body></html>"
+        return $html
+    }
+    
+    # Function to set RichTextBox from HTML
+    function Set-RichTextBoxFromHtml {
+        param(
+            [System.Windows.Controls.RichTextBox]$RichTextBox,
+            [string]$HtmlContent
+        )
+        
+        $RichTextBox.Document.Blocks.Clear()
+        
+        if ([string]::IsNullOrWhiteSpace($HtmlContent)) {
+            return
+        }
+        
+        try {
+            # Clean HTML
+            $cleanHtml = $HtmlContent -replace '<html[^>]*>', '' -replace '</html>', ''
+            $cleanHtml = $cleanHtml -replace '<body[^>]*>', '' -replace '</body>', ''
+            $cleanHtml = $cleanHtml -replace '<head>.*?</head>', ''
+            
+            # Split by paragraphs
+            $paragraphs = $cleanHtml -split '<p>|</p>' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            
+            foreach ($paraText in $paragraphs) {
+                $para = New-Object System.Windows.Documents.Paragraph
+                $para.Margin = New-Object System.Windows.Thickness(0)
+                
+                # Process inline elements
+                $currentText = $paraText
+                $position = 0
+                
+                while ($position -lt $currentText.Length) {
+                    # Check for tags
+                    if ($currentText[$position] -eq '<') {
+                        $tagEnd = $currentText.IndexOf('>', $position)
+                        if ($tagEnd -gt $position) {
+                            $tag = $currentText.Substring($position, $tagEnd - $position + 1)
+                            
+                            if ($tag -match '<(b|strong|i|em|u)>') {
+                                $tagName = $matches[1]
+                                $closeTag = "</$tagName>"
+                                $closePos = $currentText.IndexOf($closeTag, $tagEnd)
+                                
+                                if ($closePos -gt $tagEnd) {
+                                    $innerText = $currentText.Substring($tagEnd + 1, $closePos - $tagEnd - 1)
+                                    $innerText = [System.Net.WebUtility]::HtmlDecode($innerText)
+                                    
+                                    $run = New-Object System.Windows.Documents.Run($innerText)
+                                    
+                                    if ($tagName -eq 'b' -or $tagName -eq 'strong') {
+                                        $run.FontWeight = [System.Windows.FontWeights]::Bold
+                                    }
+                                    if ($tagName -eq 'i' -or $tagName -eq 'em') {
+                                        $run.FontStyle = [System.Windows.FontStyles]::Italic
+                                    }
+                                    if ($tagName -eq 'u') {
+                                        $run.TextDecorations = [System.Windows.TextDecorations]::Underline
+                                    }
+                                    
+                                    $para.Inlines.Add($run)
+                                    $position = $closePos + $closeTag.Length
+                                    continue
+                                }
+                            } elseif ($tag -eq '<br>' -or $tag -eq '<br/>') {
+                                $para.Inlines.Add((New-Object System.Windows.Documents.LineBreak))
+                                $position = $tagEnd + 1
+                                continue
+                            }
+                            
+                            $position = $tagEnd + 1
+                        } else {
+                            $position++
+                        }
+                    } else {
+                        # Find next tag or end
+                        $nextTag = $currentText.IndexOf('<', $position)
+                        if ($nextTag -eq -1) { $nextTag = $currentText.Length }
+                        
+                        $plainText = $currentText.Substring($position, $nextTag - $position)
+                        $plainText = [System.Net.WebUtility]::HtmlDecode($plainText)
+                        
+                        if (-not [string]::IsNullOrWhiteSpace($plainText)) {
+                            $run = New-Object System.Windows.Documents.Run($plainText)
+                            $para.Inlines.Add($run)
+                        }
+                        
+                        $position = $nextTag
+                    }
+                }
+                
+                $RichTextBox.Document.Blocks.Add($para)
+            }
+            
+        } catch {
+            # Fallback: just add as plain text
+            $plainText = $HtmlContent -replace '<[^>]+>', ''
+            $plainText = [System.Net.WebUtility]::HtmlDecode($plainText)
+            $para = New-Object System.Windows.Documents.Paragraph
+            $para.Inlines.Add((New-Object System.Windows.Documents.Run($plainText)))
+            $RichTextBox.Document.Blocks.Clear()
+            $RichTextBox.Document.Blocks.Add($para)
+        }
+    }
+    
+    # Formatting button handlers for Internal message
+    $InternalBoldButton.Add_Click({
+        $selection = $InternalRichTextBox.Selection
+        if (-not $selection.IsEmpty) {
+            $currentWeight = $selection.GetPropertyValue([System.Windows.Documents.TextElement]::FontWeightProperty)
+            if ($currentWeight -eq [System.Windows.FontWeights]::Bold) {
+                $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontWeightProperty, [System.Windows.FontWeights]::Normal)
+            } else {
+                $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontWeightProperty, [System.Windows.FontWeights]::Bold)
+            }
+        }
+        $InternalRichTextBox.Focus()
+    })
+    
+    $InternalItalicButton.Add_Click({
+        $selection = $InternalRichTextBox.Selection
+        if (-not $selection.IsEmpty) {
+            $currentStyle = $selection.GetPropertyValue([System.Windows.Documents.TextElement]::FontStyleProperty)
+            if ($currentStyle -eq [System.Windows.FontStyles]::Italic) {
+                $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontStyleProperty, [System.Windows.FontStyles]::Normal)
+            } else {
+                $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontStyleProperty, [System.Windows.FontStyles]::Italic)
+            }
+        }
+        $InternalRichTextBox.Focus()
+    })
+    
+    $InternalUnderlineButton.Add_Click({
+        $selection = $InternalRichTextBox.Selection
+        if (-not $selection.IsEmpty) {
+            $currentDeco = $selection.GetPropertyValue([System.Windows.Documents.Inline]::TextDecorationsProperty)
+            if ($currentDeco -eq [System.Windows.TextDecorations]::Underline) {
+                $selection.ApplyPropertyValue([System.Windows.Documents.Inline]::TextDecorationsProperty, $null)
+            } else {
+                $selection.ApplyPropertyValue([System.Windows.Documents.Inline]::TextDecorationsProperty, [System.Windows.TextDecorations]::Underline)
+            }
+        }
+        $InternalRichTextBox.Focus()
+    })
+    
+    $InternalClearButton.Add_Click({
+        $selection = $InternalRichTextBox.Selection
+        if (-not $selection.IsEmpty) {
+            $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontWeightProperty, [System.Windows.FontWeights]::Normal)
+            $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontStyleProperty, [System.Windows.FontStyles]::Normal)
+            $selection.ApplyPropertyValue([System.Windows.Documents.Inline]::TextDecorationsProperty, $null)
+        }
+        $InternalRichTextBox.Focus()
+    })
+    
+    # Formatting button handlers for External message
+    $ExternalBoldButton.Add_Click({
+        $selection = $ExternalRichTextBox.Selection
+        if (-not $selection.IsEmpty) {
+            $currentWeight = $selection.GetPropertyValue([System.Windows.Documents.TextElement]::FontWeightProperty)
+            if ($currentWeight -eq [System.Windows.FontWeights]::Bold) {
+                $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontWeightProperty, [System.Windows.FontWeights]::Normal)
+            } else {
+                $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontWeightProperty, [System.Windows.FontWeights]::Bold)
+            }
+        }
+        $ExternalRichTextBox.Focus()
+    })
+    
+    $ExternalItalicButton.Add_Click({
+        $selection = $ExternalRichTextBox.Selection
+        if (-not $selection.IsEmpty) {
+            $currentStyle = $selection.GetPropertyValue([System.Windows.Documents.TextElement]::FontStyleProperty)
+            if ($currentStyle -eq [System.Windows.FontStyles]::Italic) {
+                $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontStyleProperty, [System.Windows.FontStyles]::Normal)
+            } else {
+                $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontStyleProperty, [System.Windows.FontStyles]::Italic)
+            }
+        }
+        $ExternalRichTextBox.Focus()
+    })
+    
+    $ExternalUnderlineButton.Add_Click({
+        $selection = $ExternalRichTextBox.Selection
+        if (-not $selection.IsEmpty) {
+            $currentDeco = $selection.GetPropertyValue([System.Windows.Documents.Inline]::TextDecorationsProperty)
+            if ($currentDeco -eq [System.Windows.TextDecorations]::Underline) {
+                $selection.ApplyPropertyValue([System.Windows.Documents.Inline]::TextDecorationsProperty, $null)
+            } else {
+                $selection.ApplyPropertyValue([System.Windows.Documents.Inline]::TextDecorationsProperty, [System.Windows.TextDecorations]::Underline)
+            }
+        }
+        $ExternalRichTextBox.Focus()
+    })
+    
+    $ExternalClearButton.Add_Click({
+        $selection = $ExternalRichTextBox.Selection
+        if (-not $selection.IsEmpty) {
+            $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontWeightProperty, [System.Windows.FontWeights]::Normal)
+            $selection.ApplyPropertyValue([System.Windows.Documents.TextElement]::FontStyleProperty, [System.Windows.FontStyles]::Normal)
+            $selection.ApplyPropertyValue([System.Windows.Documents.Inline]::TextDecorationsProperty, $null)
+        }
+        $ExternalRichTextBox.Focus()
+    })
+    
+    # Enable/disable schedule fields based on radio selection
+    $DisabledRadio.Add_Checked({ 
+        $ScheduleGroup.IsEnabled = $false 
+    })
+    $EnabledRadio.Add_Checked({ 
+        $ScheduleGroup.IsEnabled = $false 
+    })
+    $ScheduledRadio.Add_Checked({ 
+        $ScheduleGroup.IsEnabled = $true 
+    })
+    
+    # Enable/disable external message fields
+    $ExternalEnabledCheck.Add_Checked({
+        $ExternalAllRadio.IsEnabled = $true
+        $ExternalKnownRadio.IsEnabled = $true
+        $ExternalRichTextBox.IsEnabled = $true
+        $ExternalBoldButton.IsEnabled = $true
+        $ExternalItalicButton.IsEnabled = $true
+        $ExternalUnderlineButton.IsEnabled = $true
+        $ExternalClearButton.IsEnabled = $true
+        if (-not $ExternalAllRadio.IsChecked -and -not $ExternalKnownRadio.IsChecked) {
+            $ExternalAllRadio.IsChecked = $true
+        }
+    })
+    
+    $ExternalEnabledCheck.Add_Unchecked({
+        $ExternalAllRadio.IsEnabled = $false
+        $ExternalKnownRadio.IsEnabled = $false
+        $ExternalRichTextBox.IsEnabled = $false
+        $ExternalBoldButton.IsEnabled = $false
+        $ExternalItalicButton.IsEnabled = $false
+        $ExternalUnderlineButton.IsEnabled = $false
+        $ExternalClearButton.IsEnabled = $false
+    })
+    
+    $LoadAutoRepliesButton.Add_Click({
+        $mailboxIdentity = $MailboxIdentityBox.Text.Trim()
+        
+        if ([string]::IsNullOrWhiteSpace($mailboxIdentity)) {
+            [System.Windows.MessageBox]::Show("Please enter a mailbox email address", "Validation", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+            return
+        }
+        
+        try {
+            $LoadAutoRepliesButton.IsEnabled = $false
+            $StatusTextBlock.Text = "Loading automatic reply settings..."
+            Write-Log "Loading automatic reply settings for: $mailboxIdentity"
+            
+            # Get mailbox info
+            $mailbox = Get-Mailbox -Identity $mailboxIdentity -ErrorAction Stop
+            
+            # Get automatic reply configuration
+            $autoReplyConfig = Get-MailboxAutoReplyConfiguration -Identity $mailboxIdentity -ErrorAction Stop
+            
+            $script:currentMailboxSettings = $autoReplyConfig
+            
+            # Update status panel
+            $MailboxNameText.Text = "Mailbox: $($mailbox.DisplayName)"
+            
+            switch ($autoReplyConfig.AutoReplyState) {
+                "Disabled" {
+                    $AutoReplyStateText.Text = "Status: Disabled"
+                    $AutoReplyStateText.Foreground = [System.Windows.Media.Brushes]::Gray
+                    $StatusBorder.Background = [System.Windows.Media.Brushes]::LightGray
+                    $StatusBorder.BorderBrush = [System.Windows.Media.Brushes]::Gray
+                    $DisabledRadio.IsChecked = $true
+                }
+                "Enabled" {
+                    $AutoReplyStateText.Text = "Status: Enabled"
+                    $AutoReplyStateText.Foreground = [System.Windows.Media.Brushes]::Green
+                    $StatusBorder.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(230, 255, 230))
+                    $StatusBorder.BorderBrush = [System.Windows.Media.Brushes]::Green
+                    $EnabledRadio.IsChecked = $true
+                }
+                "Scheduled" {
+                    $AutoReplyStateText.Text = "Status: Scheduled"
+                    $AutoReplyStateText.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(255, 140, 0))
+                    $StatusBorder.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(255, 248, 220))
+                    $StatusBorder.BorderBrush = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(255, 140, 0))
+                    $ScheduledRadio.IsChecked = $true
+                }
+            }
+            
+            if ($autoReplyConfig.AutoReplyState -eq "Scheduled") {
+                $startLocal = $autoReplyConfig.StartTime.ToLocalTime()
+                $endLocal = $autoReplyConfig.EndTime.ToLocalTime()
+                $ScheduledText.Text = "Active: $($startLocal.ToString('g')) to $($endLocal.ToString('g'))"
+                $ScheduledText.Visibility = [System.Windows.Visibility]::Visible
+                
+                $StartDatePicker.SelectedDate = $startLocal
+                $StartTimeBox.Text = $startLocal.ToString("HH:mm")
+                $EndDatePicker.SelectedDate = $endLocal
+                $EndTimeBox.Text = $endLocal.ToString("HH:mm")
+            } else {
+                $ScheduledText.Visibility = [System.Windows.Visibility]::Collapsed
+                $StartDatePicker.SelectedDate = (Get-Date).Date
+                $StartTimeBox.Text = "09:00"
+                $EndDatePicker.SelectedDate = (Get-Date).Date.AddDays(7)
+                $EndTimeBox.Text = "17:00"
+            }
+            
+            $StatusPanel.Visibility = [System.Windows.Visibility]::Visible
+            
+            # Load and render messages
+            Set-RichTextBoxFromHtml -RichTextBox $InternalRichTextBox -HtmlContent $autoReplyConfig.InternalMessage
+            Set-RichTextBoxFromHtml -RichTextBox $ExternalRichTextBox -HtmlContent $autoReplyConfig.ExternalMessage
+            
+            # External audience
+            if ($autoReplyConfig.ExternalAudience -eq "None") {
+                $ExternalEnabledCheck.IsChecked = $false
+            } else {
+                $ExternalEnabledCheck.IsChecked = $true
+                if ($autoReplyConfig.ExternalAudience -eq "All") {
+                    $ExternalAllRadio.IsChecked = $true
+                } else {
+                    $ExternalKnownRadio.IsChecked = $true
+                }
+            }
+            
+            $SettingsTabControl.IsEnabled = $true
+            $SaveButton.IsEnabled = $true
+            
+            $StatusTextBlock.Text = "Settings loaded successfully"
+            Write-Log "Successfully loaded automatic reply settings for $($mailbox.DisplayName)"
+            
+        } catch {
+            Write-Log "Error loading automatic reply settings: $($_.Exception.Message)"
+            [System.Windows.MessageBox]::Show("Error loading settings:`n`n$($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+            $StatusTextBlock.Text = "Error loading settings"
+            $StatusPanel.Visibility = [System.Windows.Visibility]::Collapsed
+            $SettingsTabControl.IsEnabled = $false
+            $SaveButton.IsEnabled = $false
+        } finally {
+            $LoadAutoRepliesButton.IsEnabled = $true
+        }
+    })
+    
+    $SaveButton.Add_Click({
+        $mailboxIdentity = $MailboxIdentityBox.Text.Trim()
+        
+        if ([string]::IsNullOrWhiteSpace($mailboxIdentity)) {
+            [System.Windows.MessageBox]::Show("No mailbox loaded", "Validation", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+            return
+        }
+        
+        # Determine state
+        $newState = "Disabled"
+        if ($EnabledRadio.IsChecked) {
+            $newState = "Enabled"
+        } elseif ($ScheduledRadio.IsChecked) {
+            $newState = "Scheduled"
+        }
+        
+        # Validate scheduled dates if needed
+        if ($newState -eq "Scheduled") {
+            if (-not $StartDatePicker.SelectedDate -or -not $EndDatePicker.SelectedDate) {
+                [System.Windows.MessageBox]::Show("Please select both start and end dates for scheduled automatic replies", "Validation", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                return
+            }
+            
+            if ([string]::IsNullOrWhiteSpace($StartTimeBox.Text) -or [string]::IsNullOrWhiteSpace($EndTimeBox.Text)) {
+                [System.Windows.MessageBox]::Show("Please enter both start and end times in HH:mm format (e.g., 09:00)", "Validation", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                return
+            }
+            
+            # Validate time format
+            if ($StartTimeBox.Text -notmatch '^\d{2}:\d{2}$' -or $EndTimeBox.Text -notmatch '^\d{2}:\d{2}$') {
+                [System.Windows.MessageBox]::Show("Time must be in HH:mm format (e.g., 09:00 or 17:30)", "Validation", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                return
+            }
+            
+            try {
+                $startTime = [datetime]::Parse($StartTimeBox.Text)
+                $endTime = [datetime]::Parse($EndTimeBox.Text)
+            } catch {
+                [System.Windows.MessageBox]::Show("Invalid time format. Please use HH:mm (e.g., 09:00)", "Validation", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                return
+            }
+            
+            $startDateTime = $StartDatePicker.SelectedDate.Date.Add($startTime.TimeOfDay)
+            $endDateTime = $EndDatePicker.SelectedDate.Date.Add($endTime.TimeOfDay)
+            
+            if ($endDateTime -le $startDateTime) {
+                [System.Windows.MessageBox]::Show("End date/time must be after start date/time", "Validation", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                return
+            }
+        }
+        
+        # Determine external audience
+        $externalAudience = "None"
+        if ($ExternalEnabledCheck.IsChecked) {
+            if ($ExternalAllRadio.IsChecked) {
+                $externalAudience = "All"
+            } else {
+                $externalAudience = "Known"
+            }
+        }
+        
+        $result = [System.Windows.MessageBox]::Show("Save automatic reply settings for this mailbox?", "Confirm", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+        
+        if ($result -eq [System.Windows.MessageBoxResult]::Yes) {
+            try {
+                $SaveButton.IsEnabled = $false
+                $StatusTextBlock.Text = "Saving settings..."
+                Write-Log "Saving automatic reply settings for $mailboxIdentity"
+                
+                # Convert RichTextBox content to HTML
+                $internalHtml = Get-RichTextBoxHtml -RichTextBox $InternalRichTextBox
+                $externalHtml = Get-RichTextBoxHtml -RichTextBox $ExternalRichTextBox
+                
+                $setParams = @{
+                    Identity = $mailboxIdentity
+                    AutoReplyState = $newState
+                    InternalMessage = $internalHtml
+                    ExternalMessage = $externalHtml
+                    ExternalAudience = $externalAudience
+                }
+                
+                if ($newState -eq "Scheduled") {
+                    $setParams.StartTime = $startDateTime
+                    $setParams.EndTime = $endDateTime
+                }
+                
+                Set-MailboxAutoReplyConfiguration @setParams -ErrorAction Stop
+                
+                Write-Log "Successfully saved automatic reply settings"
+                $StatusTextBlock.Text = "Settings saved successfully"
+                [System.Windows.MessageBox]::Show("Automatic reply settings saved successfully!", "Success", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+                
+                # Reload to show updated status
+                $LoadAutoRepliesButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+                
+            } catch {
+                Write-Log "Error saving automatic reply settings: $($_.Exception.Message)"
+                [System.Windows.MessageBox]::Show("Error saving settings:`n`n$($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+                $StatusTextBlock.Text = "Error saving settings"
+            } finally {
+                $SaveButton.IsEnabled = $true
+            }
+        }
+    })
+    
+    $CloseButton.Add_Click({ $AutoWindow.Close() })
+    
+    # Add Enter key support
+    $MailboxIdentityBox.Add_KeyDown({
+        param($sender, $e)
+        if ($e.Key -eq [System.Windows.Input.Key]::Return) {
+            $LoadAutoRepliesButton.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+        }
+    })
+    
+    $AutoWindow.ShowDialog() | Out-Null
+})
+
+
 Write-Log "Exchange Online Management Tool initialized"
 Write-Log "Ready to manage Exchange Online"
 
-
 $Window.ShowDialog() | Out-Null
-
-
