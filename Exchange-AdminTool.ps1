@@ -144,9 +144,11 @@
     - Account tab: UPN, SAM, DN, GUID, creation/modification dates
 
 .PROXY CONFIGURATION
-    The script includes proxy configuration for corporate environments.
-    Update the proxy URL in lines 21-23 if different from default:
-    http://proxy.gellerco.com:8080
+    The script includes proxy configuration for corporate environments
+    Update the proxy URL in lines 174-176 if different from default
+
+.COMPANY IMAGE FILE
+	Update $logoPath with your company logo
 
 #>
 
@@ -3157,3 +3159,4 @@ Write-Log "Exchange Online Management Tool initialized"
 Write-Log "Ready to manage Exchange Online"
 
 $Window.ShowDialog() | Out-Null
+
