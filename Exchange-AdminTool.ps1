@@ -17,7 +17,6 @@
 
 .AUTHOR
     Created by: Craig Werts
-    Company: Geller & Co.
     Department: Desktop Engineering
 
 .VERSION HISTORY
@@ -155,8 +154,10 @@
 
 .PROXY CONFIGURATION
     The script includes proxy configuration for corporate environments.
-    Update the proxy URL in lines 21-23 if different from default:
-    http://proxy.gellerco.com:8080
+    Update the proxy URL in lines 183-185 if different from default.
+
+.COMPANY LOGO
+	Modify $logoPath with your company logo image.
 
 #>
 
@@ -180,9 +181,11 @@ Add-Type -AssemblyName System.Windows.Forms
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12  
 
-[system.net.webrequest]::defaultwebproxy = new-object system.net.webproxy('http://proxy.gellerco.com:8080')  
+<#
+[system.net.webrequest]::defaultwebproxy = new-object system.net.webproxy('YOURDOMAINPROXYHERE')  
 [system.net.webrequest]::defaultwebproxy.credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials  
 [system.net.webrequest]::defaultwebproxy.BypassProxyOnLocal = $true  
+#>
 
 # Pre-connection check - OPTIONAL NOW
 Write-Host "======================================" -ForegroundColor Cyan
@@ -3265,3 +3268,4 @@ Write-Log "Exchange Online Management Tool initialized"
 Write-Log "Ready to manage Exchange Online"
 
 $Window.ShowDialog() | Out-Null
+
