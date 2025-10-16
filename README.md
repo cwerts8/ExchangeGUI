@@ -312,7 +312,6 @@ Contributions are welcome! Please feel free to submit pull requests or open issu
 
 For issues or questions:
 - Open an issue in the GitHub repository
-- Contact the IT Administration team at Geller & Company
 
 ---
 
