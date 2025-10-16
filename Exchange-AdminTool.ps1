@@ -55,7 +55,7 @@
     - Visual status indicators with color coding
     - External audience controls (All/Contacts only)
     
-    Version 2.8.0 - 10-15-25 - Current
+    Version 2.8.0 - 10-15-25
     - Implemented optional Exchange Online connection
     - GUI now launches immediately without requiring EXO connection
     - Added visual connection status indicator (Red/Green)
@@ -65,7 +65,7 @@
     - Prompts user to connect when accessing modules while disconnected
     - Improved flexibility for users who don't need immediate EXO access
     
-    Version 2.8.1 - 10-15-25 - Current
+    Version 2.8.1 - 10-13-25
     - Fixed bug in mailbox permissions loading when only one delegate exists
     - Fixed bug in calendar permissions loading when only one delegate exists
     - Improved array handling in Get-CombinedMailboxPermissions function
@@ -74,12 +74,22 @@
     - Enhanced error logging for permission retrieval
     - Functions now properly return IEnumerable collections for DataGrid binding
 
+    Version 2.9.0 - 10-16-25 (Current)
+    - Modified AD Group Members to use Active Directory module instead of Exchange Online
+    - Now supports all AD group types (Security Groups, Distribution Groups, etc.)
+    - No longer requires Exchange Online connection for AD Group Members feature
+    - Added Group Scope display (DomainLocal, Global, Universal)
+    - Enhanced member type support (Users, Groups, Computers, Contacts)
+    - Added SAM Account Name to Excel export
+    - Requires Active Directory PowerShell module (RSAT)
+
 .REQUIREMENTS
     - PowerShell 5.1 or higher
     - ExchangeOnlineManagement module
     - ImportExcel module (for Excel export functionality)
     - Appropriate Exchange Online administrator permissions
     - Corporate proxy configuration (if applicable)
+    - Active Directory PowerShell module (RSAT)
 
 .NOTES
     File Name      : Exchange-AdminTool.ps1
@@ -144,11 +154,9 @@
     - Account tab: UPN, SAM, DN, GUID, creation/modification dates
 
 .PROXY CONFIGURATION
-    The script includes proxy configuration for corporate environments
-    Update the proxy URL in lines 174-176 if different from default
-
-.COMPANY IMAGE FILE
-	Update $logoPath with your company logo
+    The script includes proxy configuration for corporate environments.
+    Update the proxy URL in lines 21-23 if different from default:
+    http://proxy.gellerco.com:8080
 
 #>
 
@@ -172,12 +180,9 @@ Add-Type -AssemblyName System.Windows.Forms
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12  
 
-# Uncomment this section and modify line 112 with your proxy settings if needed
-<#
-[system.net.webrequest]::defaultwebproxy = new-object system.net.webproxy('YOURDOMAINPROXY')  
+[system.net.webrequest]::defaultwebproxy = new-object system.net.webproxy('http://proxy.gellerco.com:8080')  
 [system.net.webrequest]::defaultwebproxy.credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials  
 [system.net.webrequest]::defaultwebproxy.BypassProxyOnLocal = $true  
-#>
 
 # Pre-connection check - OPTIONAL NOW
 Write-Host "======================================" -ForegroundColor Cyan
@@ -2055,8 +2060,35 @@ $syncHash.CalendarButton.Add_Click({
     $CalWindow.ShowDialog() | Out-Null
 })
 
+# Modified AD Group Members Button Click Handler
+# Replace the existing $syncHash.GroupMembersButton.Add_Click section with this code
+
 $syncHash.GroupMembersButton.Add_Click({
     Write-Log "Opening AD Group Members window..."
+    
+    # Check if Active Directory module is available
+    if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
+        [System.Windows.MessageBox]::Show(
+            "Active Directory PowerShell module is not installed.`n`nThis feature requires the RSAT Active Directory module.`n`nPlease install it from:`nSettings > Apps > Optional Features > Add RSAT: Active Directory Domain Services",
+            "Module Required",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning
+        )
+        Write-Log "AD Group Members requires ActiveDirectory module"
+        return
+    }
+    
+    try {
+        Import-Module ActiveDirectory -ErrorAction Stop
+    } catch {
+        [System.Windows.MessageBox]::Show(
+            "Failed to load Active Directory module:`n`n$($_.Exception.Message)",
+            "Module Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error
+        )
+        return
+    }
     
     [xml]$GroupMembersXAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -2075,7 +2107,7 @@ $syncHash.GroupMembersButton.Add_Click({
         
         <GroupBox Grid.Row="0" Header="Group Information" Margin="15,15,15,10" Padding="15">
             <StackPanel>
-                <TextBlock Text="Group Email or Name:" FontWeight="Bold" Margin="0,0,0,5"/>
+                <TextBlock Text="Group Name, Email, or SAM Account Name:" FontWeight="Bold" Margin="0,0,0,5"/>
                 <DockPanel Margin="0,0,0,10">
                     <Button x:Name="LoadGroupButton" 
                            Content="Load Members" 
@@ -2098,6 +2130,7 @@ $syncHash.GroupMembersButton.Add_Click({
                             <TextBlock x:Name="GroupNameText" FontWeight="Bold" Margin="0,0,0,5"/>
                             <TextBlock x:Name="GroupTypeText" FontSize="11" Foreground="#666" Margin="0,0,0,3"/>
                             <TextBlock x:Name="GroupEmailText" FontSize="11" Foreground="#666" Margin="0,0,0,3"/>
+                            <TextBlock x:Name="GroupScopeText" FontSize="11" Foreground="#666" Margin="0,0,0,3"/>
                             <TextBlock x:Name="GroupMemberCountText" FontSize="11" Foreground="#666"/>
                         </StackPanel>
                     </Border>
@@ -2115,7 +2148,7 @@ $syncHash.GroupMembersButton.Add_Click({
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Display Name" Binding="{Binding DisplayName}" Width="2*"/>
                         <DataGridTextColumn Header="Email Address" Binding="{Binding Email}" Width="2*"/>
-                        <DataGridTextColumn Header="Type" Binding="{Binding RecipientType}" Width="*"/>
+                        <DataGridTextColumn Header="Object Type" Binding="{Binding ObjectClass}" Width="*"/>
                         <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="1.5*"/>
                         <DataGridTextColumn Header="Department" Binding="{Binding Department}" Width="1.5*"/>
                     </DataGrid.Columns>
@@ -2127,7 +2160,7 @@ $syncHash.GroupMembersButton.Add_Click({
             <DockPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" DockPanel.Dock="Left">
                     <TextBlock x:Name="StatusText" 
-                              Text="Enter a group email or name to begin" 
+                              Text="Enter a group name or email to begin" 
                               VerticalAlignment="Center"
                               FontSize="11"
                               Foreground="#666"/>
@@ -2174,6 +2207,7 @@ $syncHash.GroupMembersButton.Add_Click({
     $GroupNameText = $GrpWindow.FindName("GroupNameText")
     $GroupTypeText = $GrpWindow.FindName("GroupTypeText")
     $GroupEmailText = $GrpWindow.FindName("GroupEmailText")
+    $GroupScopeText = $GrpWindow.FindName("GroupScopeText")
     $GroupMemberCountText = $GrpWindow.FindName("GroupMemberCountText")
     $MembersGrid = $GrpWindow.FindName("MembersGrid")
     $StatusText = $GrpWindow.FindName("StatusText")
@@ -2195,25 +2229,35 @@ $syncHash.GroupMembersButton.Add_Click({
         $groupIdentity = $GroupIdentityBox.Text.Trim()
         
         if ([string]::IsNullOrWhiteSpace($groupIdentity)) {
-            [System.Windows.MessageBox]::Show("Please enter a group email or name", "Validation", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+            [System.Windows.MessageBox]::Show("Please enter a group name, email, or SAM account name", "Validation", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
             return
         }
         
         try {
             $LoadGroupButton.IsEnabled = $false
             $StatusText.Text = "Loading group information..."
-            Write-Log "Loading group: $groupIdentity"
+            Write-Log "Loading AD group: $groupIdentity"
             
+            # Try to find the group using various methods
             $group = $null
+            
+            # Try by Identity (works for DN, GUID, SAM, etc.)
             try {
-                $group = Get-DistributionGroup -Identity $groupIdentity -ErrorAction Stop
-                $groupType = "Distribution Group"
+                $group = Get-ADGroup -Identity $groupIdentity -Properties * -ErrorAction Stop
+                Write-Log "Found group by identity: $($group.Name)"
             } catch {
+                # Try by email address
                 try {
-                    $group = Get-Group -Identity $groupIdentity -ErrorAction Stop
-                    $groupType = "Security Group"
+                    $group = Get-ADGroup -Filter "mail -eq '$groupIdentity'" -Properties * -ErrorAction Stop
+                    Write-Log "Found group by email: $($group.Name)"
                 } catch {
-                    throw "Group not found. Please verify the group name or email address."
+                    # Try by display name
+                    try {
+                        $group = Get-ADGroup -Filter "DisplayName -eq '$groupIdentity'" -Properties * -ErrorAction Stop
+                        Write-Log "Found group by display name: $($group.Name)"
+                    } catch {
+                        throw "Group not found. Please verify the group name, email, or SAM account name."
+                    }
                 }
             }
             
@@ -2222,9 +2266,10 @@ $syncHash.GroupMembersButton.Add_Click({
             }
             
             $StatusText.Text = "Loading members..."
-            Write-Log "Retrieving members for: $($group.DisplayName)"
+            Write-Log "Retrieving members for: $($group.Name)"
             
-            $members = Get-DistributionGroupMember -Identity $group.Identity -ErrorAction Stop
+            # Get group members using AD cmdlets
+            $members = Get-ADGroupMember -Identity $group.DistinguishedName -ErrorAction Stop
             
             $enrichedMembers = @()
             $processedCount = 0
@@ -2235,36 +2280,94 @@ $syncHash.GroupMembersButton.Add_Click({
                 $StatusText.Text = "Processing member $processedCount of $totalCount..."
                 
                 try {
-                    $recipient = Get-Recipient -Identity $member.Identity -ErrorAction SilentlyContinue
+                    $displayName = ""
+                    $email = ""
+                    $title = ""
+                    $department = ""
+                    $objectClass = $member.objectClass
+                    
+                    # Get detailed information based on object type
+                    if ($member.objectClass -eq "user") {
+                        try {
+                            $adUser = Get-ADUser -Identity $member.DistinguishedName -Properties DisplayName, EmailAddress, Title, Department, mail -ErrorAction Stop
+                            $displayName = if ($adUser.DisplayName) { $adUser.DisplayName } else { $adUser.Name }
+                            $email = if ($adUser.EmailAddress) { $adUser.EmailAddress } elseif ($adUser.mail) { $adUser.mail } else { "" }
+                            $title = if ($adUser.Title) { $adUser.Title } else { "" }
+                            $department = if ($adUser.Department) { $adUser.Department } else { "" }
+                        } catch {
+                            Write-Log "Warning: Could not get full details for user $($member.Name)"
+                            $displayName = $member.Name
+                        }
+                    } elseif ($member.objectClass -eq "group") {
+                        try {
+                            $adGroup = Get-ADGroup -Identity $member.DistinguishedName -Properties DisplayName, mail -ErrorAction Stop
+                            $displayName = if ($adGroup.DisplayName) { $adGroup.DisplayName } else { $adGroup.Name }
+                            $email = if ($adGroup.mail) { $adGroup.mail } else { "" }
+                            $objectClass = "Group"
+                        } catch {
+                            Write-Log "Warning: Could not get full details for group $($member.Name)"
+                            $displayName = $member.Name
+                        }
+                    } elseif ($member.objectClass -eq "computer") {
+                        $displayName = $member.Name
+                        $objectClass = "Computer"
+                    } elseif ($member.objectClass -eq "contact") {
+                        try {
+                            $adContact = Get-ADObject -Identity $member.DistinguishedName -Properties DisplayName, mail -ErrorAction Stop
+                            $displayName = if ($adContact.DisplayName) { $adContact.DisplayName } else { $member.Name }
+                            $email = if ($adContact.mail) { $adContact.mail } else { "" }
+                            $objectClass = "Contact"
+                        } catch {
+                            $displayName = $member.Name
+                            $objectClass = "Contact"
+                        }
+                    } else {
+                        $displayName = $member.Name
+                    }
                     
                     $memberObj = [PSCustomObject]@{
-                        DisplayName = $member.DisplayName
-                        Email = if ($member.PrimarySmtpAddress) { $member.PrimarySmtpAddress.ToString() } else { "N/A" }
-                        RecipientType = $member.RecipientType
-                        Title = if ($recipient.Title) { $recipient.Title } else { "" }
-                        Department = if ($recipient.Department) { $recipient.Department } else { "" }
-                        Identity = $member.Identity
+                        DisplayName = $displayName
+                        Email = $email
+                        ObjectClass = $objectClass
+                        Title = $title
+                        Department = $department
+                        Identity = $member.DistinguishedName
+                        SAMAccountName = $member.SamAccountName
                     }
                     
                     $enrichedMembers += $memberObj
                 } catch {
-                    Write-Log "Warning: Could not get full details for $($member.DisplayName)"
+                    Write-Log "Warning: Error processing member $($member.Name): $($_.Exception.Message)"
                     $enrichedMembers += [PSCustomObject]@{
-                        DisplayName = $member.DisplayName
-                        Email = if ($member.PrimarySmtpAddress) { $member.PrimarySmtpAddress.ToString() } else { "N/A" }
-                        RecipientType = $member.RecipientType
+                        DisplayName = $member.Name
+                        Email = ""
+                        ObjectClass = $member.objectClass
                         Title = ""
                         Department = ""
-                        Identity = $member.Identity
+                        Identity = $member.DistinguishedName
+                        SAMAccountName = $member.SamAccountName
                     }
                 }
             }
             
+            # Sort by display name
+            $enrichedMembers = $enrichedMembers | Sort-Object DisplayName
+            
             $MembersGrid.ItemsSource = $enrichedMembers
             
-            $GroupNameText.Text = "Group: $($group.DisplayName)"
-            $GroupTypeText.Text = "Type: $groupType"
-            $GroupEmailText.Text = "Email: $(if ($group.PrimarySmtpAddress) { $group.PrimarySmtpAddress } else { 'N/A' })"
+            # Determine group type
+            $groupType = "Unknown"
+            if ($group.GroupCategory -eq "Security") {
+                $groupType = "Security Group"
+            } elseif ($group.GroupCategory -eq "Distribution") {
+                $groupType = "Distribution Group"
+            }
+            
+            # Update info panel
+            $GroupNameText.Text = "Group: $($group.Name)"
+            $GroupTypeText.Text = "Category: $groupType"
+            $GroupScopeText.Text = "Scope: $($group.GroupScope)"
+            $GroupEmailText.Text = "Email: $(if ($group.mail) { $group.mail } else { 'N/A' })"
             $GroupMemberCountText.Text = "Total Members: $($enrichedMembers.Count)"
             $GroupInfoPanel.Visibility = [System.Windows.Visibility]::Visible
             
@@ -2275,7 +2378,7 @@ $syncHash.GroupMembersButton.Add_Click({
             $CopyEmailsButton.IsEnabled = $true
             
             $StatusText.Text = "Loaded $($enrichedMembers.Count) members successfully"
-            Write-Log "Successfully loaded $($enrichedMembers.Count) members from $($group.DisplayName)"
+            Write-Log "Successfully loaded $($enrichedMembers.Count) members from $($group.Name)"
             
         } catch {
             Write-Log "Error loading group: $($_.Exception.Message)"
@@ -2298,7 +2401,7 @@ $syncHash.GroupMembersButton.Add_Click({
         
         try {
             $emailAddresses = $script:currentMembers | 
-                Where-Object { $_.Email -ne "N/A" } | 
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_.Email) } | 
                 Select-Object -ExpandProperty Email
             
             if ($emailAddresses.Count -eq 0) {
@@ -2336,8 +2439,8 @@ $syncHash.GroupMembersButton.Add_Click({
             $saveDialog = New-Object Microsoft.Win32.SaveFileDialog
             $saveDialog.Filter = "Excel Files (*.xlsx)|*.xlsx"
             $saveDialog.Title = "Save Group Members Report"
-            $groupNameSafe = $script:currentGroupInfo.DisplayName -replace '[\\/:*?"<>|]', '_'
-            $saveDialog.FileName = "Group_Members_${groupNameSafe}_$(Get-Date -Format 'yyyyMMdd_HHmmss').xlsx"
+            $groupNameSafe = $script:currentGroupInfo.Name -replace '[\\/:*?"<>|]', '_'
+            $saveDialog.FileName = "AD_Group_Members_${groupNameSafe}_$(Get-Date -Format 'yyyyMMdd_HHmmss').xlsx"
             
             if ($saveDialog.ShowDialog()) {
                 $excelPath = $saveDialog.FileName
@@ -2349,11 +2452,14 @@ $syncHash.GroupMembersButton.Add_Click({
                 $exportData = @()
                 foreach ($member in $script:currentMembers) {
                     $exportData += [PSCustomObject]@{
-                        'Group Name' = $script:currentGroupInfo.DisplayName
-                        'Group Email' = if ($script:currentGroupInfo.PrimarySmtpAddress) { $script:currentGroupInfo.PrimarySmtpAddress.ToString() } else { "N/A" }
+                        'Group Name' = $script:currentGroupInfo.Name
+                        'Group Email' = if ($script:currentGroupInfo.mail) { $script:currentGroupInfo.mail } else { "N/A" }
+                        'Group Category' = $script:currentGroupInfo.GroupCategory
+                        'Group Scope' = $script:currentGroupInfo.GroupScope
                         'Member Display Name' = $member.DisplayName
                         'Member Email' = $member.Email
-                        'Recipient Type' = $member.RecipientType
+                        'Member SAM Account' = $member.SAMAccountName
+                        'Object Type' = $member.ObjectClass
                         'Title' = $member.Title
                         'Department' = $member.Department
                         'Export Date' = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -2361,13 +2467,13 @@ $syncHash.GroupMembersButton.Add_Click({
                 }
                 
                 $exportData | Export-Excel -Path $excelPath `
-                    -WorksheetName "Group Members" `
+                    -WorksheetName "AD Group Members" `
                     -AutoSize `
                     -AutoFilter `
                     -FreezeTopRow `
                     -BoldTopRow `
                     -TableStyle Medium9 `
-                    -TableName "GroupMembers"
+                    -TableName "ADGroupMembers"
                 
                 Write-Log "Successfully exported $($exportData.Count) members to Excel"
                 $StatusText.Text = "Export completed successfully"
@@ -3159,4 +3265,3 @@ Write-Log "Exchange Online Management Tool initialized"
 Write-Log "Ready to manage Exchange Online"
 
 $Window.ShowDialog() | Out-Null
-
