@@ -162,7 +162,7 @@
 #>
 
 # Update Script version
-$ScriptVersion = "2.8.1"
+$ScriptVersion = "2.9.0"
 
 # Load logo from file path
 $logoPath = "$PSScriptRoot\FullColorLogo.png" 
@@ -3268,4 +3268,5 @@ Write-Log "Exchange Online Management Tool initialized"
 Write-Log "Ready to manage Exchange Online"
 
 $Window.ShowDialog() | Out-Null
+
 
